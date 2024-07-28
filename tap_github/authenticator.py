@@ -37,6 +37,26 @@ class TokenManager:
             return False
         return True
 
+    def validate_token(self):
+        #TODO rename to distinguish from is_valid
+        try:
+            response = requests.get(
+                url="https://api.github.com/rate_limit",
+                headers={
+                    "Authorization": f"token {token}",
+                },
+            )
+            response.raise_for_status()
+            return True
+        except requests.exceptions.HTTPError:
+            msg = (
+                f"A token was dismissed. "
+                f"{response.status_code} Client Error: "
+                f"{str(response.content)} (Reason: {response.reason})"
+            )
+            self.logger.warning(msg)
+            return False
+
 
 class PersonalTokenManager(TokenManager):
     """A class to store token rate limiting information."""
@@ -175,37 +195,20 @@ class GitHubTokenAuthenticator(APIAuthenticatorBase):
                 )
                 found_tokens = env_tokens
 
-        tokens_map = {
-            token: PersonalTokenManager(token, rate_limit_buffer) for token in found_tokens
-        }
+        tokens_map: Dict[str, TokenManager]
+        for token in found_tokens:
+            token_manager = PersonalTokenManager(token, rate_limit_buffer)
+            if token_manager.validate_token():
+                tokens_map[token] = token_manager
 
         # Parse App level private key and generate a token
         if "GITHUB_APP_PRIVATE_KEY" in environ.keys():
             # To simplify settings, we use a single env-key formatted as follows:
             # "{app_id};;{-----BEGIN RSA PRIVATE KEY-----\n_YOUR_PRIVATE_KEY_\n-----END RSA PRIVATE KEY-----}"
             env_key = environ["GITHUB_APP_PRIVATE_KEY"]
-            rate_limit_buffer = self._config.get("rate_limit_buffer", None)
-            app_token_manager = AppTokenManager(env_key, rate_limit_buffer=rate_limit_buffer)
-            if app_token_manager.current_token is not None:
+            app_token_manager = AppTokenManager(env_key, rate_limit_buffer)
+            if app_token_manager.validate_token():
                 tokens_map[app_token_manager.current_token] = app_token_manager
-
-        for token in tokens_map:
-            try:
-                response = requests.get(
-                    url="https://api.github.com/rate_limit",
-                    headers={
-                        "Authorization": f"token {token}",
-                    },
-                )
-                response.raise_for_status()
-            except requests.exceptions.HTTPError:
-                del tokens_map[token]
-                msg = (
-                    f"A token was dismissed. "
-                    f"{response.status_code} Client Error: "
-                    f"{str(response.content)} (Reason: {response.reason})"
-                )
-                self.logger.warning(msg)
 
         self.logger.info(f"Tap will run with {len(filtered_tokens)} auth tokens")
         return tokens_map
