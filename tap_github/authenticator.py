@@ -14,7 +14,15 @@ from singer_sdk.streams import RESTStream
 
 
 class TokenManager:
-    """A class to store a token's attributes and state."""
+    """A class to store a token's attributes and state.
+    This parent class should not be used directly, use a subclass instead.
+    """
+
+    DEFAULT_RATE_LIMIT = 5000
+    # The DEFAULT_RATE_LIMIT_BUFFER buffer serves two purposes:
+    # - keep some leeway and rotate tokens before erroring out on rate limit.
+    # - not consume all available calls when we rare using an org or user token.
+    DEFAULT_RATE_LIMIT_BUFFER = 1000
 
     def update_rate_limit(self, response_headers: Any) -> None:
         self.rate_limit = int(response_headers["X-RateLimit-Limit"])
@@ -61,12 +69,6 @@ class TokenManager:
 class PersonalTokenManager(TokenManager):
     """A class to store token rate limiting information."""
 
-    DEFAULT_RATE_LIMIT = 5000
-    # The DEFAULT_RATE_LIMIT_BUFFER buffer serves two purposes:
-    # - keep some leeway and rotate tokens before erroring out on rate limit.
-    # - not consume all available calls when we rare using an org or user token.
-    DEFAULT_RATE_LIMIT_BUFFER = 1000
-
     def __init__(self, token: str, rate_limit_buffer: Optional[int] = None):
         """Init PersonalTokenRateLimit info."""
         self.token = token
@@ -75,6 +77,7 @@ class PersonalTokenManager(TokenManager):
         self.rate_limit_reset: Optional[int] = None
         self.rate_limit_used = 0
         self.rate_limit_buffer = rate_limit_buffer or self.DEFAULT_RATE_LIMIT_BUFFER
+        super().__init__(rate_limit_buffer=rate_limit_buffer)
 
 
 def generate_jwt_token(
@@ -136,10 +139,6 @@ class AppTokenManager(TokenManager):
     # TODO - add logic to refresh the token
 
     DEFAULT_RATE_LIMIT = 15000
-    # The DEFAULT_RATE_LIMIT_BUFFER buffer serves two purposes:
-    # - keep some leeway and rotate tokens before erroring out on rate limit.
-    # - not consume all available calls when we rare using an org or user token.
-    DEFAULT_RATE_LIMIT_BUFFER = 1000
 
     def gen_key(self):
         if not (github_private_key):
