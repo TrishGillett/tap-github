@@ -30,23 +30,8 @@ class TokenManager:
         self.rate_limit_reset = int(response_headers["X-RateLimit-Reset"])
         self.rate_limit_used = int(response_headers["X-RateLimit-Used"])
 
-    def is_valid(self) -> bool:
-        """Check if token is valid.
-
-        Returns:
-            True if the token is valid and has enough api calls remaining.
-        """
-        if self.rate_limit_reset is None:
-            return True
-        if (
-            self.rate_limit_used > (self.rate_limit - self.rate_limit_buffer)
-            and self.rate_limit_reset > datetime.now().timestamp()
-        ):
-            return False
-        return True
-
-    def validate_token(self):
-        #TODO rename to distinguish from is_valid
+    def is_valid_token(self):
+       """Try making a request with the current token. If the request succeeds return True, else False."""
         try:
             response = requests.get(
                 url="https://api.github.com/rate_limit",
@@ -64,6 +49,21 @@ class TokenManager:
             )
             self.logger.warning(msg)
             return False
+
+    def has_calls_remaining(self) -> bool:
+        """Check if a token has capacity to make more calls.
+
+        Returns:
+            True if the token is valid and has enough api calls remaining.
+        """
+        too_close_to_limit = self.rate_limit_used > (self.rate_limit - self.rate_limit_buffer)
+        reset_time_not_reached = self.rate_limit_reset > datetime.now().timestamp()
+
+        if self.rate_limit_reset is None:
+            return True
+        if too_close_to_limit and reset_time_not_reached:
+            return False
+        return True
 
 
 class PersonalTokenManager(TokenManager):
@@ -106,6 +106,7 @@ def generate_app_access_token(
     github_private_key: str,
     github_installation_id: Optional[str] = None,
 ) -> str:
+    produced_at = datetime.now()
     jwt_token = generate_jwt_token(github_app_id, github_private_key)
 
     headers = {"Authorization": f"Bearer {jwt_token}"}
@@ -130,29 +131,35 @@ def generate_app_access_token(
     if resp.status_code != 201:
         resp.raise_for_status()
 
-    return resp.json()["token"]
+    return resp.json()["token"], produced_at
 
 
 class AppTokenManager(TokenManager):
     """A class to store an app token's attributes and state, and handle token refreshing"""
 
-    # TODO - add logic to refresh the token
-
     DEFAULT_RATE_LIMIT = 15000
+    DEFAULT_EXPIRY_BUFFER = 10
 
-    def gen_key(self):
-        if not (github_private_key):
-            self.logger.warning(
-                "GITHUB_APP_PRIVATE_KEY could not be parsed. The expected format is "
-                '":app_id:;;-----BEGIN RSA PRIVATE KEY-----\n_YOUR_P_KEY_\n-----END RSA PRIVATE KEY-----"'
-            )
-            return None
-
-        else:
-            token = generate_app_access_token(
+    def refresh_token(self):
+        if self.github_private_key:
+            token, token_produced_at = generate_app_access_token(
                 self.github_app_id, self.github_private_key, self.github_installation_id or None
             )
-            return token
+            is_valid = self.is_valid_token()
+            if is_valid:
+                self.token = token
+                self.token_expires_at = token_produced_at + datetime.timedelta(hours=1)
+            else:
+                self.logger.warning("Generated token could not be validated.")
+                self.token = None
+                self.token_expires_at = None
+        else:
+            self.logger.warning(
+                "GITHUB_APP_PRIVATE_KEY could not be parsed. The expected format is "
+                '":app_id:;;-----BEGIN RSA PRIVATE KEY-----\\n_YOUR_P_KEY_\\n-----END RSA PRIVATE KEY-----"'
+            )
+            self.token = None
+            self.token_expires_at = None
 
     def __init__(self, env_key: str, rate_limit_buffer: Optional[int] = None):
         """Init PersonalTokenRateLimit info."""
@@ -160,13 +167,31 @@ class AppTokenManager(TokenManager):
         self.github_app_id = parts[0]
         self.github_private_key = (parts[1:2] or [""])[0].replace("\\n", "\n")
         self.github_installation_id = (parts[2:3] or [""])[0]
-        self.current_token = self.gen_key()
+        self.refresh_token()
 
         self.rate_limit = self.DEFAULT_RATE_LIMIT
         self.rate_limit_remaining = self.DEFAULT_RATE_LIMIT
         self.rate_limit_reset: Optional[int] = None
         self.rate_limit_used = 0
         self.rate_limit_buffer = rate_limit_buffer or self.DEFAULT_RATE_LIMIT_BUFFER
+        self.expiry_time_buffer_mins = self.DEFAULT_EXPIRY_BUFFER
+
+    def has_calls_remaining(self):
+        """ Confirm whether the app still has capacity remaining, and update the token if getting too old.
+
+        """
+        has_time_remaining = datetime.now() + datetime.timedelta(minutes=self.expiry_time_buffer_mins) < self.token_expires_at
+
+        if has_calls_remaining and has_time_remaining:
+            return True
+        elif has_calls_remaining and not has_time_remaining:
+            self.refresh_token()
+            if self.token is None:
+                return False
+            else:
+                return True
+        else:
+            return False
 
 
 class GitHubTokenAuthenticator(APIAuthenticatorBase):
@@ -232,7 +257,7 @@ class GitHubTokenAuthenticator(APIAuthenticatorBase):
         current_token = self.active_token.token if self.active_token else ""
         shuffle(tokens_list)
         for _, token_rate_limit in tokens_list:
-            if token_rate_limit.is_valid() and current_token != token_rate_limit.token:
+            if token_rate_limit.has_calls_remaining() and current_token != token_rate_limit.token:
                 self.active_token = token_rate_limit
                 self.logger.info(f"Switching to fresh auth token")
                 return
@@ -262,7 +287,7 @@ class GitHubTokenAuthenticator(APIAuthenticatorBase):
         result = super().auth_headers
         if self.active_token:
             # Make sure that our token is still valid or update it.
-            if not self.active_token.is_valid():
+            if not self.active_token.has_calls_remaining():
                 self.get_next_auth_token()
             result["Authorization"] = f"token {self.active_token.token}"
         else:
