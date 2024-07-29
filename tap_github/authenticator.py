@@ -219,11 +219,11 @@ class GitHubTokenAuthenticator(APIAuthenticatorBase):
                 )
                 found_tokens = env_tokens
 
-        tokens_map: Dict[str, TokenManager]
+        token_list: List[TokenManager]
         for token in found_tokens:
             token_manager = PersonalTokenManager(token, rate_limit_buffer)
             if token_manager.validate_token():
-                tokens_map[token] = token_manager
+                token_list.append(token_manager)
 
         # Parse App level private key and generate a token
         if "GITHUB_APP_PRIVATE_KEY" in environ.keys():
@@ -232,7 +232,7 @@ class GitHubTokenAuthenticator(APIAuthenticatorBase):
             env_key = environ["GITHUB_APP_PRIVATE_KEY"]
             app_token_manager = AppTokenManager(env_key, rate_limit_buffer)
             if app_token_manager.validate_token():
-                tokens_map[app_token_manager.current_token] = app_token_manager
+                token_list[app_token_manager.current_token] = app_token_manager
 
         self.logger.info(f"Tap will run with {len(filtered_tokens)} auth tokens")
         return tokens_map
@@ -247,18 +247,18 @@ class GitHubTokenAuthenticator(APIAuthenticatorBase):
         self.logger: logging.Logger = stream.logger
         self.tap_name: str = stream.tap_name
         self._config: Dict[str, Any] = dict(stream.config)
-        self.tokens_map = self.prepare_tokens()
+        self.token_list = self.prepare_tokens()
         self.active_token: Optional[PersonalTokenManager] = (
-            choice(list(self.tokens_map.values())) if len(self.tokens_map) else None
+            choice(token_list) if token_list else None
         )
 
     def get_next_auth_token(self) -> None:
-        tokens_list = list(self.tokens_map.items())
+        tokens_list = self.token_list
         current_token = self.active_token.token if self.active_token else ""
         shuffle(tokens_list)
-        for _, token_rate_limit in tokens_list:
-            if token_rate_limit.has_calls_remaining() and current_token != token_rate_limit.token:
-                self.active_token = token_rate_limit
+        for token_manager in tokens_list:
+            if token_manager.has_calls_remaining() and current_token != token_manager.token:
+                self.active_token = token_manager
                 self.logger.info(f"Switching to fresh auth token")
                 return
 
@@ -270,7 +270,7 @@ class GitHubTokenAuthenticator(APIAuthenticatorBase):
         self, response_headers: requests.models.CaseInsensitiveDict
     ) -> None:
         # If no token or only one token is available, return early.
-        if len(self.tokens_map) <= 1 or self.active_token is None:
+        if len(self.token_list) <= 1 or self.active_token is None:
             return
 
         self.active_token.update_rate_limit(response_headers)
