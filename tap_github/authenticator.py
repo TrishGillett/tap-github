@@ -143,7 +143,7 @@ class AppTokenManager(TokenManager):
     """A class to store an app token's attributes and state, and handle token refreshing"""
 
     DEFAULT_RATE_LIMIT = 15000
-    DEFAULT_EXPIRY_BUFFER = 10
+    DEFAULT_EXPIRY_BUFFER_MINS = 10
 
     def __init__(self, env_key: str, rate_limit_buffer: Optional[int] = None, **kwargs):
         """Init PersonalTokenRateLimit info."""
@@ -154,9 +154,10 @@ class AppTokenManager(TokenManager):
         self.token: Optional[str] = None
         self.token_expires_at: Optional[datetime] = None
         self.refresh_token()
+        rate_limit_buffer = rate_limit_buffer or DEFAULT_EXPIRY_BUFFER_MINS
 
         super().__init__(self.token, rate_limit_buffer=rate_limit_buffer, **kwargs)
-        self.expiry_time_buffer_mins = self.DEFAULT_EXPIRY_BUFFER
+        self.expiry_time_buffer_mins = self.DEFAULT_EXPIRY_BUFFER_MINS
 
     def refresh_token(self):
         if self.github_private_key:
