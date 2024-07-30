@@ -2,7 +2,7 @@
 
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from os import environ
 from random import choice, shuffle
 from typing import Any, Dict, List, Optional
@@ -24,26 +24,27 @@ class TokenManager:
     # - not consume all available calls when we rare using an org or user token.
     DEFAULT_RATE_LIMIT_BUFFER = 1000
 
-    def __init__(self, rate_limit_buffer=None):
+    def __init__(self, rate_limit_buffer=None, logger=None):
+        self.logger = logger
         self.rate_limit = self.DEFAULT_RATE_LIMIT
         self.rate_limit_remaining = self.DEFAULT_RATE_LIMIT
-        self.rate_limit_reset: Optional[int] = None
+        self.rate_limit_reset: Optional[datetime] = None
         self.rate_limit_used = 0
         self.rate_limit_buffer = rate_limit_buffer or self.DEFAULT_RATE_LIMIT_BUFFER
 
     def update_rate_limit(self, response_headers: Any) -> None:
         self.rate_limit = int(response_headers["X-RateLimit-Limit"])
         self.rate_limit_remaining = int(response_headers["X-RateLimit-Remaining"])
-        self.rate_limit_reset = int(response_headers["X-RateLimit-Reset"])
+        self.rate_limit_reset = datetime.fromtimestamp(int(response_headers["X-RateLimit-Reset"]))
         self.rate_limit_used = int(response_headers["X-RateLimit-Used"])
 
     def is_valid_token(self) -> bool:
-       """Try making a request with the current token. If the request succeeds return True, else False."""
+        """Try making a request with the current token. If the request succeeds return True, else False."""
         try:
             response = requests.get(
                 url="https://api.github.com/rate_limit",
                 headers={
-                    "Authorization": f"token {token}",
+                    "Authorization": f"token {self.token}",
                 },
             )
             response.raise_for_status()
@@ -64,7 +65,7 @@ class TokenManager:
             True if the token is valid and has enough api calls remaining.
         """
         too_close_to_limit = self.rate_limit_used > (self.rate_limit - self.rate_limit_buffer)
-        reset_time_not_reached = self.rate_limit_reset > datetime.now().timestamp()
+        reset_time_not_reached = self.rate_limit_reset > datetime.now()
 
         if self.rate_limit_reset is None:
             return True
@@ -76,10 +77,10 @@ class TokenManager:
 class PersonalTokenManager(TokenManager):
     """A class to store token rate limiting information."""
 
-    def __init__(self, token: str, rate_limit_buffer: Optional[int] = None):
+    def __init__(self, token: str, rate_limit_buffer: Optional[int] = None, **kwargs):
         """Init PersonalTokenRateLimit info."""
         self.token = token
-        super().__init__(rate_limit_buffer=rate_limit_buffer)
+        super().__init__(rate_limit_buffer=rate_limit_buffer, **kwargs)
 
 
 def generate_jwt_token(
@@ -163,7 +164,7 @@ class AppTokenManager(TokenManager):
             self.token = None
             self.token_expires_at = None
 
-    def __init__(self, env_key: str, rate_limit_buffer: Optional[int] = None):
+    def __init__(self, env_key: str, rate_limit_buffer: Optional[int] = None, **kwargs):
         """Init PersonalTokenRateLimit info."""
         parts = env_key.split(";;")
         self.github_app_id = parts[0]
@@ -171,7 +172,7 @@ class AppTokenManager(TokenManager):
         self.github_installation_id = (parts[2:3] or [""])[0]
         self.refresh_token()
 
-        super().__init__(rate_limit_buffer=rate_limit_buffer)
+        super().__init__(rate_limit_buffer=rate_limit_buffer, **kwargs)
         self.expiry_time_buffer_mins = self.DEFAULT_EXPIRY_BUFFER
 
     def has_calls_remaining(self) -> bool:
@@ -219,7 +220,7 @@ class GitHubTokenAuthenticator(APIAuthenticatorBase):
 
         token_list: List[TokenManager]
         for token in personal_tokens:
-            token_manager = PersonalTokenManager(token, rate_limit_buffer)
+            token_manager = PersonalTokenManager(token, rate_limit_buffer, logger=self.logger)
             if token_manager.is_valid_token():
                 token_list.append(token_manager)
 
@@ -228,7 +229,7 @@ class GitHubTokenAuthenticator(APIAuthenticatorBase):
             # To simplify settings, we use a single env-key formatted as follows:
             # "{app_id};;{-----BEGIN RSA PRIVATE KEY-----\n_YOUR_PRIVATE_KEY_\n-----END RSA PRIVATE KEY-----}"
             env_key = environ["GITHUB_APP_PRIVATE_KEY"]
-            app_token_manager = AppTokenManager(env_key, rate_limit_buffer)
+            app_token_manager = AppTokenManager(env_key, rate_limit_buffer, logger=self.logger)
             if app_token_manager.is_valid_token():
                 token_list.append(app_token_manager)
 
