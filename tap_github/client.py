@@ -39,6 +39,10 @@ class GitHubRestStream(RESTStream):
 
     _authenticator: GitHubTokenAuthenticator | None = None
 
+    def __init__(self):
+        super().__init__(None, **kwargs)
+        self.logger.warning(f"stream filter: <{config['stream_map_config']['sensitive_repos']}>")
+
     @property
     def authenticator(self) -> GitHubTokenAuthenticator:
         if self._authenticator is None:
