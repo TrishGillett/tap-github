@@ -1659,6 +1659,18 @@ class ReviewCommentsStream(GitHubRestStream):
         th.Property("side", th.StringType),
     ).to_dict()
 
+    def get_url_params(
+        self,
+        context: Context | None,
+        next_page_token: Any | None,  # noqa: ANN401
+    ) -> dict[str, Any]:
+        """Return a dictionary of values to be used in URL parameterization."""
+        assert context is not None, f"Context cannot be empty for '{self.name}' stream."
+        params = super().get_url_params(context, next_page_token)
+        params["sort"] = "updated"
+        params["direction"] = "asc"
+        return params
+
 
 class ContributorsStream(GitHubRestStream):
     """Defines 'Contributors' stream. Fetching User & Bot contributors."""
