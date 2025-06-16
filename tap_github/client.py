@@ -129,6 +129,10 @@ class GitHubRestStream(RESTStream):
                 since
                 and direction == "desc"
                 and (parse(replication_date) < parse(since))
+            ) or (
+                since
+                and direction == "asc"
+                and (parse(replication_date) > parse(since))
             ):
                 return None
 
