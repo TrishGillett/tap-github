@@ -953,11 +953,11 @@ class IssueCommentsStream(GitHubRestStream):
     ignore_parent_replication_key = True
     # FIXME: this allows the tap to continue on server-side timeouts but means
     # we have gaps in our data
-    tolerated_http_errors: ClassVar[list[int]] = [502]
+    # tolerated_http_errors: ClassVar[list[int]] = [502]
 
     # GitHub is not missing the "since" parameter on this endpoint.
     # But it is too expensive on large repos and results in a lot of server errors.
-    use_fake_since_parameter = True
+    # use_fake_since_parameter = True
 
     def get_records(self, context: Context | None = None) -> Iterable[dict[str, Any]]:
         """Return a generator of row-type dictionary objects.
