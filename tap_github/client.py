@@ -31,7 +31,7 @@ EMPTY_REPO_ERROR_STATUS = 409
 class GitHubRestStream(RESTStream):
     """GitHub Rest stream class."""
 
-    MAX_PER_PAGE = 25  # GitHub's limit is 100.
+    MAX_PER_PAGE = 10  # GitHub's limit is 100.
     MAX_RESULTS_LIMIT: int | None = None
     DEFAULT_API_BASE_URL = "https://api.github.com"
     LOG_REQUEST_METRIC_URLS = True
