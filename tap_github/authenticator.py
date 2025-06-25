@@ -56,6 +56,11 @@ class TokenManager:
             tz=timezone.utc,
         )
         self.rate_limit_used = int(response_headers["X-RateLimit-Used"])
+        self.logger.info(
+            f"Confirmed rate limit {self.rate_limit}, "
+            f"remaining {self.rate_limit_remaining}, "
+            f"used {self.rate_limit_used}, reset {self.rate_limit_reset}"
+        )
 
     def is_valid_token(self) -> bool:
         """Try making a request with the current token. If the request succeeds return True, else False."""  # noqa: E501
@@ -89,9 +94,18 @@ class TokenManager:
         """
         if self.rate_limit_reset is None:
             return True
-        return self.rate_limit_used <= (
+        if self.rate_limit_used <= (
             self.rate_limit - self.rate_limit_buffer
-        ) or self.rate_limit_reset <= datetime.now(tz=timezone.utc)
+        ) or self.rate_limit_reset <= datetime.now(tz=timezone.utc):
+            return True
+        else:
+            self.logger(
+                f"Rate limit used: {self.rate_limit_used}, rate limit: "
+                f"{self.rate_limit}, buffer: {self.rate_limit_buffer}. We're too close "
+                f"to the rate limit buffer, no more calls can be made on this token "
+                f"until the rate limit resets at {self.rate_limit_reset}"
+            )
+            return False
 
 
 class PersonalTokenManager(TokenManager):
@@ -339,9 +353,16 @@ class GitHubTokenAuthenticator(APIAuthenticatorBase):
         self.active_token: TokenManager | None = (
             choice(self.token_managers) if self.token_managers else None
         )
+        self.logger.info(
+            f"Starting with an auth token for app {self.active_token.github_app_id}"
+        )
 
     def get_next_auth_token(self) -> None:
         current_token = self.active_token.token if self.active_token else ""
+        if current_token and isinstance(self.active_token, AppTokenManager):
+            self.logger.info(
+                f"End use of current token for app {self.active_token.github_app_id}"
+            )
         token_managers = deepcopy(self.token_managers)
         shuffle(token_managers)
         for token_manager in token_managers:
@@ -350,7 +371,10 @@ class GitHubTokenAuthenticator(APIAuthenticatorBase):
                 and current_token != token_manager.token
             ):
                 self.active_token = token_manager
-                self.logger.info("Switching to fresh auth token")
+                self.logger.info(
+                    f"Switching to fresh auth token for app "
+                    f"{self.active_token.github_app_id}"
+                )
                 return
 
         raise RuntimeError(
