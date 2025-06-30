@@ -56,11 +56,14 @@ class TokenManager:
             tz=timezone.utc,
         )
         self.rate_limit_used = int(response_headers["X-RateLimit-Used"])
+        self.retry_after_seconds = response_headers.get("retry-after")
         self.logger.info(
             f"Confirmed rate limit {self.rate_limit}, "
             f"remaining {self.rate_limit_remaining}, "
-            f"used {self.rate_limit_used}, reset {self.rate_limit_reset}"
+            f"used {self.rate_limit_used}, reset {self.rate_limit_reset}."
         )
+        if self.retry_after_seconds is not None and self.retry_after_seconds > 0:
+            self.logger.info(f"Retry after {self.retry_after_seconds} seconds.")
 
     def is_valid_token(self) -> bool:
         """Try making a request with the current token. If the request succeeds return True, else False."""  # noqa: E501
@@ -98,6 +101,13 @@ class TokenManager:
             self.rate_limit - self.rate_limit_buffer
         ) or self.rate_limit_reset <= datetime.now(tz=timezone.utc):
             return True
+        if self.retry_after_seconds is not None and self.retry_after_seconds > 0:
+            self.logger(
+                f"Retry after header is set. We need to wait "
+                f"{self.retry_after_seconds} seconds before making "
+                "another request!"
+            )
+            return False
         else:
             self.logger(
                 f"Rate limit used: {self.rate_limit_used}, rate limit: "
